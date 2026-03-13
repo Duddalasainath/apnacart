@@ -1,0 +1,3 @@
+# Cloudflare Pages redirect rules
+# Force www -> apex (adjust if preferred the other way)
+https://www.devjodi.com/* https://devjodi.com/:splat 301
