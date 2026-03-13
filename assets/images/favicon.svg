@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Background -->
+  <rect width="32" height="32" rx="7" fill="#0a0a0f"/>
+
+  <!-- Terminal bracket left -->
+  <polyline points="5,10 2,16 5,22" stroke="#6366f1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Terminal bracket right -->
+  <polyline points="27,10 30,16 27,22" stroke="#6366f1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Slash separator -->
+  <line x1="19" y1="9" x2="13" y2="23" stroke="#22d3a2" stroke-width="2" stroke-linecap="round"/>
+</svg>
