@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Build a Python-based vCenter monitoring tool using pyVmomi to inventory VMs, track power states, and flag security risks like orphaned and stale virtual machines." />
+  <meta name="keywords" content="VMware, vCenter, pyVmomi, Python, VM monitoring, virtualization security, infrastructure automation" />
+  <meta name="author" content="DevJodi" />
+  <meta property="og:title" content="VMware vCenter Monitoring with Python — DevJodi" />
+  <meta property="og:description" content="Build a Python-based vCenter monitoring tool using pyVmomi to inventory VMs, track power states, and flag security risks." />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://devjodi.com/blog/vmware-vcenter-monitoring-python.html" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <title>VMware vCenter Monitoring with Python — DevJodi</title>
+  <link rel="canonical" href="https://devjodi.com/blog/vmware-vcenter-monitoring-python.html" />
+  <link rel="icon" type="image/svg+xml" href="../assets/images/favicon.svg" />
+  <link rel="stylesheet" href="../assets/css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav scrolled" id="nav">
+    <div class="nav__inner">
+      <a href="../index.html" class="nav__logo">DevJodi</a>
+      <ul class="nav__links">
+        <li><a href="../index.html#home" class="nav__link">Home</a></li>
+        <li><a href="../index.html#services" class="nav__link">Services</a></li>
+        <li><a href="../index.html#projects" class="nav__link">Projects</a></li>
+        <li><a href="../index.html#blog" class="nav__link active">Blog</a></li>
+        <li><a href="../index.html#contact" class="nav__link nav__link--cta">Contact</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- Article Hero -->
+    <div class="article-hero">
+      <div class="container">
+        <a href="../index.html#blog" class="article-hero__back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back to Blog
+        </a>
+        <div class="article-hero__meta">
+          <span class="blog-item__tag">Infrastructure</span>
+          <span class="blog-item__tag">Security</span>
+          <time class="blog-item__date">March 2026</time>
+        </div>
+        <h1 class="article-hero__title">VMware vCenter Monitoring with Python — Know Every VM in Your Infrastructure</h1>
+        <p class="article-hero__desc">Most VMware environments have VMs that nobody owns, VMs that haven't been touched in months, and resource allocations that were "temporary" two years ago. Here's how to build a Python tool that surfaces all of it using the vCenter REST API and pyVmomi.</p>
+      </div>
+    </div>
+
+    <!-- Article Body -->
+    <div class="container">
+      <div class="article-body">
+
+        <p>
+          VMware environments grow organically. A developer spins up a test VM, forgets about it. A project ends but the VMs keep running. An old snapshot chain silently eats disk. Over time, without active monitoring, a vCenter environment becomes a graveyard of resources — and a security blind spot.
+        </p>
+
+        <p>
+          We built a small Python tool internally to connect to vCenter, pull a full VM inventory, and report on power states, resource usage, and machines that look suspicious or wasteful. This post walks through the approach.
+        </p>
+
+        <h2>Why vCenter Monitoring Matters for Security</h2>
+
+        <p>
+          VM sprawl is not just a cost problem — it is a security problem. Consider what an attacker can do with an orphaned VM:
+        </p>
+
+        <ul>
+          <li>It likely hasn't received OS patches in months or years</li>
+          <li>Its firewall rules may be overly permissive from a testing phase</li>
+          <li>No one is watching its logs or network traffic</li>
+          <li>It may still have active credentials, VPN configs, or service accounts on it</li>
+        </ul>
+
+        <p>
+          Beyond orphaned VMs, stale snapshots can expose sensitive data if the VM was cloned at a point where secrets were on disk. And VMs running with hardware version 7 or 8 are missing a decade of hypervisor security patches.
+        </p>
+
+        <div class="article-callout">
+          <p><strong>Key insight:</strong> Every unmonitored VM is an unknown attack surface. The first step to securing a VMware environment is knowing exactly what is running and what is not.</p>
+        </div>
+
+        <h2>Prerequisites</h2>
+
+        <p>You need:</p>
+
+        <ul>
+          <li>Python 3.8+ with <code>pyVmomi</code> installed (<code>pip install pyVmomi</code>)</li>
+          <li>A vCenter account with read-only access (never use admin for monitoring)</li>
+          <li>Network access to the vCenter server (port 443)</li>
+        </ul>
+
+        <p>
+          For the read-only account, create a dedicated monitoring role in vCenter with only the permissions needed — Global &gt; Read, Virtual Machine &gt; Read, Host &gt; Read. Principle of least privilege applies here too.
+        </p>
+
+        <h2>Connecting to vCenter with pyVmomi</h2>
+
+        <p>
+          pyVmomi is VMware's official Python SDK for the vSphere API. It lets you connect to a vCenter or ESXi host and traverse the entire managed object model.
+        </p>
+
+        <pre><code>import ssl
+import atexit
+from pyVim.connect import SmartConnect, Disconnect
+from pyVmomi import vim
+
+def connect_vcenter(host, user, password, port=443):
+    """Connect to vCenter and return a service instance."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    # In production: load proper CA cert instead of disabling verification
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+
+    si = SmartConnect(
+        host=host,
+        user=user,
+        pwd=password,
+        port=port,
+        sslContext=context
+    )
+    atexit.register(Disconnect, si)
+    return si</code></pre>
+
+        <div class="article-callout article-callout--warn">
+          <p><strong>Warning:</strong> The example above disables SSL verification for simplicity in lab environments. In production, always provide a proper CA certificate and set <code>verify_mode = ssl.CERT_REQUIRED</code>.</p>
+        </div>
+
+        <h2>Collecting the Full VM Inventory</h2>
+
+        <p>
+          The most efficient way to retrieve all VMs is using pyVmomi's <strong>container view</strong>. This avoids manually traversing the object hierarchy and lets vCenter do the filtering on the server side.
+        </p>
+
+        <pre><code>def get_all_vms(si):
+    """Return a list of all VM objects from vCenter."""
+    content = si.RetrieveContent()
+    container = content.rootFolder
+    view_type = [vim.VirtualMachine]
+    recursive = True
+
+    container_view = content.viewManager.CreateContainerView(
+        container, view_type, recursive
+    )
+    vms = list(container_view.view)
+    container_view.Destroy()
+    return vms</code></pre>
+
+        <h2>Extracting VM Metrics</h2>
+
+        <p>
+          For each VM object, we can pull config, runtime state, and guest info. Here is a function that extracts the fields we care about for both inventory and security review:
+        </p>
+
+        <pre><code>from datetime import datetime, timezone
+
+def extract_vm_info(vm):
+    """Extract key metadata from a VM managed object."""
+    config   = vm.config
+    runtime  = vm.runtime
+    summary  = vm.summary
+    guest    = vm.guest
+
+    # CPU and memory allocation
+    cpu_count   = config.hardware.numCPU if config else None
+    memory_mb   = config.hardware.memoryMB if config else None
+
+    # Power state
+    power_state = runtime.powerState  # poweredOn / poweredOff / suspended
+
+    # Last time tools heartbeat was seen (indicates active use)
+    tools_running = guest.toolsRunningStatus if guest else "unknown"
+
+    # Snapshot count — high count = cleanup needed
+    snapshot_count = 0
+    if vm.snapshot:
+        snapshot_count = count_snapshots(vm.snapshot.rootSnapshotList)
+
+    # Hardware version (e.g. vmx-19)
+    hw_version = config.version if config else "unknown"
+
+    return {
+        "name":           vm.name,
+        "power_state":    power_state,
+        "cpu":            cpu_count,
+        "memory_mb":      memory_mb,
+        "tools_status":   tools_running,
+        "snapshot_count": snapshot_count,
+        "hw_version":     hw_version,
+        "guest_os":       config.guestFullName if config else "unknown",
+        "uuid":           config.uuid if config else None,
+    }
+
+def count_snapshots(snapshot_list):
+    """Recursively count all snapshots in the tree."""
+    count = 0
+    for snap in snapshot_list:
+        count += 1
+        if snap.childSnapshotList:
+            count += count_snapshots(snap.childSnapshotList)
+    return count</code></pre>
+
+        <h2>Flagging VMs That Need Attention</h2>
+
+        <p>
+          Once you have the inventory, you can apply rules to identify VMs that need investigation. We use a simple flag system:
+        </p>
+
+        <pre><code>def audit_vm(vm_info):
+    """Return a list of findings for a single VM."""
+    flags = []
+
+    if vm_info["power_state"] == "poweredOff":
+        flags.append("POWERED_OFF — verify if still needed")
+
+    if vm_info["snapshot_count"] > 3:
+        flags.append(f"HIGH_SNAPSHOT_COUNT ({vm_info['snapshot_count']}) — check for disk bloat")
+
+    if vm_info["tools_status"] == "guestToolsNotRunning":
+        flags.append("TOOLS_NOT_RUNNING — may indicate OS issue or stale VM")
+
+    hw = vm_info.get("hw_version", "")
+    if hw and int(hw.replace("vmx-", "")) < 15:
+        flags.append(f"OLD_HW_VERSION ({hw}) — upgrade to get security fixes")
+
+    if vm_info["memory_mb"] and vm_info["memory_mb"] > 32768:
+        flags.append(f"LARGE_MEMORY ({vm_info['memory_mb']} MB) — confirm allocation is justified")
+
+    return flags</code></pre>
+
+        <h2>Putting It Together — the Full Report</h2>
+
+        <pre><code>import json
+
+def run_vcenter_audit(host, user, password):
+    si = connect_vcenter(host, user, password)
+    vms = get_all_vms(si)
+
+    report = {
+        "vcenter":    host,
+        "timestamp":  datetime.now(timezone.utc).isoformat(),
+        "total_vms":  len(vms),
+        "powered_on": 0,
+        "powered_off": 0,
+        "flagged":    [],
+        "inventory":  [],
+    }
+
+    for vm in vms:
+        try:
+            info  = extract_vm_info(vm)
+            flags = audit_vm(info)
+
+            if info["power_state"] == "poweredOn":
+                report["powered_on"] += 1
+            else:
+                report["powered_off"] += 1
+
+            entry = {**info, "flags": flags}
+            report["inventory"].append(entry)
+
+            if flags:
+                report["flagged"].append({
+                    "name":  info["name"],
+                    "flags": flags,
+                })
+        except Exception as e:
+            report["inventory"].append({
+                "name":  vm.name,
+                "error": str(e),
+                "flags": ["COLLECTION_ERROR"],
+            })
+
+    return report
+
+if __name__ == "__main__":
+    result = run_vcenter_audit(
+        host="vcenter.internal",
+        user="monitoring-readonly@vsphere.local",
+        password="your-password-here",
+    )
+    print(json.dumps(result, indent=2))</code></pre>
+
+        <h2>Building a Local Audit Dashboard</h2>
+
+        <p>
+          The JSON output is useful for scripting and CI pipelines, but for a weekly human review we built a companion HTML dashboard that loads the report and renders it in the browser — no backend required. The dashboard is a single static file that fetches <code>vcenter_audit.json</code> via <code>fetch()</code> and renders stat cards, a flagged-VM list, and a full inventory table.
+        </p>
+
+        <p>To serve it locally after running the audit:</p>
+
+        <pre><code># Run the audit
+python3 scripts/vcenter_audit.py
+
+# Copy the output next to the dashboard and serve
+cp /tmp/vcenter_audit.json scripts/
+python3 -m http.server 8080 --directory scripts</code></pre>
+
+        <p>Then open <code>http://localhost:8080/dashboard.html</code> in your browser.</p>
+
+        <figure class="article-figure">
+          <img
+            src="../assets/images/vcenter-audit-dashboard.png"
+            alt="vCenter Audit Dashboard showing stat cards, flagged VMs, and full inventory table"
+            loading="lazy"
+          />
+          <figcaption>The audit dashboard running locally — stat cards, flagged VMs with colour-coded badges, and the full inventory table. VM names are redacted.</figcaption>
+        </figure>
+
+        <p>
+          From a single audit run against a real environment we immediately found every VM running on <strong>vmx-10</strong> — two major hardware versions behind the vmx-15 baseline — plus one powered-off VM with VMware Tools not running. Both are actionable findings that are easy to miss without automated checks.
+        </p>
+
+        <h2>Sample JSON Output</h2>
+
+        <p>The raw JSON written to <code>/tmp/vcenter_audit.json</code> looks like this:</p>
+
+        <pre><code>{
+  "vcenter": "vcenter.internal",
+  "timestamp": "2026-03-14T09:12:44+00:00",
+  "total_vms": 47,
+  "powered_on": 31,
+  "powered_off": 16,
+  "flagged": [
+    {
+      "name": "dev-test-001",
+      "flags": [
+        "POWERED_OFF — verify if still needed",
+        "OLD_HW_VERSION (vmx-11) — upgrade to get security fixes"
+      ]
+    },
+    {
+      "name": "build-agent-legacy",
+      "flags": [
+        "HIGH_SNAPSHOT_COUNT (9) — check for disk bloat",
+        "TOOLS_NOT_RUNNING — may indicate OS issue or stale VM"
+      ]
+    }
+  ]
+}</code></pre>
+
+        <h2>What to Do With the Results</h2>
+
+        <p>
+          The raw output is useful for one-off audits, but the real value comes from running this on a schedule and tracking changes over time. Here are the workflows we follow:
+        </p>
+
+        <h3>Weekly review</h3>
+        <ul>
+          <li>Any new powered-off VM that appeared this week? Confirm with the owner or schedule for deletion in 30 days.</li>
+          <li>Any VM with tools not running on a machine that should be active? Investigate — this can indicate a crashed or compromised guest.</li>
+          <li>High snapshot count VMs — schedule a cleanup window.</li>
+        </ul>
+
+        <h3>Security triage</h3>
+        <ul>
+          <li>VMs on old hardware versions should be treated as tech debt with a deadline, not an optional upgrade.</li>
+          <li>Any powered-off VM more than 90 days old with no documented owner should be moved to a quarantine folder and decommissioned.</li>
+          <li>Cross-reference the powered-on list against your CMDB or asset tracker. Any VM not in your CMDB is a shadow asset.</li>
+        </ul>
+
+        <h3>Alerting</h3>
+        <ul>
+          <li>Export flagged VMs to a Slack webhook or email digest.</li>
+          <li>Push the JSON report to an S3 bucket or internal wiki as a timestamped artifact.</li>
+          <li>Track the <code>total_vms</code> count over time — sudden growth is worth investigating.</li>
+        </ul>
+
+        <h2>Taking It Further</h2>
+
+        <p>
+          This tool covers inventory and basic flagging. Extensions worth building:
+        </p>
+
+        <ul>
+          <li><strong>Resource utilization</strong> — use the vCenter performance manager API to pull actual CPU/memory usage, not just allocation. A VM with 16 vCPU that averages 2% usage is a strong candidate for right-sizing.</li>
+          <li><strong>Network adapter audit</strong> — enumerate NICs and check for VMs connected to promiscuous mode port groups.</li>
+          <li><strong>Datastore correlation</strong> — map each VM to its datastore and flag VMs where the combined snapshot chain exceeds 50% of the base VMDK size.</li>
+          <li><strong>vCenter event log integration</strong> — pull login events and failed authentication attempts from the vCenter event stream to detect brute force attempts against ESXi hosts.</li>
+        </ul>
+
+        <div class="article-callout">
+          <p><strong>Tip:</strong> Run the audit with a read-only service account and store credentials in HashiCorp Vault or your secrets manager. Never hardcode vCenter credentials in scripts.</p>
+        </div>
+
+        <h2>Conclusion</h2>
+
+        <p>
+          A VMware environment without monitoring is a black box — and black boxes invite both waste and compromise. This script is deliberately minimal: under 150 lines, no external dependencies beyond pyVmomi, no database, no agent. It can run from a cron job, a CI pipeline, or a scheduled Lambda.
+        </p>
+
+        <p>
+          The goal is not to build the most featureful monitoring tool — it is to remove the excuse of not knowing. Once you know what is running, you can make informed decisions about patching, decommissioning, and access control.
+        </p>
+
+        <p>
+          In a follow-up post we'll extend this to pull performance counters and build a simple utilization heatmap — useful when you need to justify a hardware refresh or identify consolidation candidates.
+        </p>
+
+        <div class="article-tags">
+          <span class="tag">VMware</span>
+          <span class="tag">Python</span>
+          <span class="tag">pyVmomi</span>
+          <span class="tag">vCenter</span>
+          <span class="tag">Infrastructure</span>
+          <span class="tag">Security</span>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <span class="footer__brand">DevJodi</span>
+        <span class="footer__copy">&copy; 2026 DevJodi. All rights reserved.</span>
+        <nav class="footer__nav" aria-label="Footer navigation">
+          <a href="../index.html#home">Home</a>
+          <a href="../index.html#services">Services</a>
+          <a href="../index.html#projects">Projects</a>
+          <a href="../index.html#blog">Blog</a>
+          <a href="../index.html#contact">Contact</a>
+        </nav>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
