@@ -6,7 +6,7 @@ const subtitle = document.getElementById('demoSubtitle');
 const metrics  = document.getElementById('demoMetrics');
 const replay   = document.getElementById('replayBtn');
 
-const W = Math.min(window.innerWidth * 0.86, 500);
+const W = Math.min(canvas.parentElement.clientWidth - 32, 500);
 const H = 360;
 canvas.width  = W;
 canvas.height = H;
