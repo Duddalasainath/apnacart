@@ -1,4 +1,4 @@
-import { prepare, layout } from '../vendor/pretext.js';
+import { prepare, layout } from './vendor/pretext.js';
 
 const canvas   = document.getElementById('demoCanvas');
 const ctx      = canvas.getContext('2d');
