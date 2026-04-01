@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Pretext.js is a high-performance text layout engine that measures and positions multiline text through pure arithmetic — zero DOM reads, real font metrics, and support for CJK, Arabic, and more." />
+  <meta name="keywords" content="pretext.js, text layout, JavaScript, canvas, font metrics, virtual scroll, performance, DOM reflow" />
+  <meta name="author" content="DevJodi" />
+  <meta property="og:title" content="Pretext.js — Text Layout Without DOM Reflow — DevJodi" />
+  <meta property="og:description" content="How Pretext.js eliminates forced synchronous layout by measuring text once with Canvas and computing everything else in pure arithmetic." />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://devjodi.com/blog/pretext-js-text-layout-engine.html" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <title>Pretext.js — Text Layout Without DOM Reflow — DevJodi</title>
+  <link rel="canonical" href="https://devjodi.com/blog/pretext-js-text-layout-engine.html" />
+  <link rel="icon" type="image/svg+xml" href="../assets/images/favicon.svg" />
+  <link rel="stylesheet" href="../assets/css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── live demo block ────────────────────────────────────────── */
+    .demo-block {
+      margin: 2.5rem 0;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(99,102,241,0.25);
+      background: #0f0f13;
+      position: relative;
+    }
+    .demo-block__label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      background: rgba(99,102,241,0.10);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.1em;
+      color: #6366f1;
+      border-bottom: 1px solid rgba(99,102,241,0.15);
+    }
+    .demo-block__label span {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #22d3a2;
+      display: inline-block;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    .demo-block__canvas-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      padding: 2rem 1rem 1.5rem;
+      gap: 1rem;
+      position: relative;
+    }
+    .demo-block__canvas-wrap canvas {
+      display: block;
+      filter: drop-shadow(0 0 32px rgba(99,102,241,0.30));
+    }
+    .demo-subtitle {
+      font-size: clamp(1rem, 3vw, 1.45rem);
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      color: #e2e8f0;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+    .demo-subtitle.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .demo-subtitle em {
+      color: #6366f1;
+      font-style: normal;
+    }
+    .demo-metrics {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      color: rgba(255,255,255,0.28);
+      letter-spacing: 0.06em;
+      opacity: 0;
+      transition: opacity 0.6s ease 0.4s;
+    }
+    .demo-metrics.visible { opacity: 1; }
+
+    .article-author {
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.9rem;
+      color: rgba(255,255,255,0.45);
+    }
+    .article-author strong { color: #e2e8f0; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+
+    /* replay button */
+    .demo-replay {
+      background: rgba(99,102,241,0.20);
+      border: 1px solid rgba(99,102,241,0.45);
+      color: #a5b4fc;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      padding: 0.45rem 1.1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      margin-top: 0.5rem;
+    }
+    .demo-replay:hover  { background: rgba(99,102,241,0.38); }
+    .demo-replay:active { transform: scale(0.96); }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav scrolled" id="nav">
+    <div class="nav__inner">
+      <a href="../index.html" class="nav__logo">DevJodi</a>
+      <ul class="nav__links">
+        <li><a href="../index.html#home"     class="nav__link">Home</a></li>
+        <li><a href="../index.html#services" class="nav__link">Services</a></li>
+        <li><a href="../index.html#projects" class="nav__link">Projects</a></li>
+        <li><a href="../index.html#blog"     class="nav__link active">Blog</a></li>
+        <li><a href="../index.html#contact"  class="nav__link nav__link--cta">Contact</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- Article Hero -->
+    <div class="article-hero">
+      <div class="container">
+        <a href="../index.html#blog" class="article-hero__back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back to Blog
+        </a>
+        <div class="article-hero__meta">
+          <span class="blog-item__tag">JavaScript</span>
+          <span class="blog-item__tag">Performance</span>
+          <time class="blog-item__date">April 2026</time>
+        </div>
+        <h1 class="article-hero__title">Pretext.js: text layout that never touches the DOM</h1>
+        <p class="article-hero__desc">Measuring text height in the browser is slower than it should be. Pretext.js uses Canvas measureText once, caches the widths, and computes everything else in pure math. No reflows. Around 1,000 blocks in 2ms.</p>
+      </div>
+    </div>
+
+    <!-- Article Body -->
+    <div class="container">
+      <div class="article-body">
+
+        <p>
+          At some point building a chat UI or a virtual list, you hit this: the browser slows down every time you ask it how tall a text block is. It doesn't matter if you batch things carefully. Reading <code>offsetHeight</code> or <code>getBoundingClientRect()</code> forces the browser to flush its layout queue right there, synchronously. Do that for hundreds of elements and your frame rate is gone.
+        </p>
+
+        <p>
+          <a href="https://pretextjs.dev" target="_blank" rel="noopener">Pretext.js</a> sidesteps this completely. It measures text using Canvas <code>measureText()</code> which never triggers a reflow, caches the glyph widths, and then figures out line counts and heights through pure math. After the first call, there are zero DOM reads.
+        </p>
+
+        <h2>Why offsetHeight is a trap</h2>
+
+        <p>
+          The browser builds a layout tree but delays the actual geometry calculation until something asks for it. The moment you read <code>offsetHeight</code>, it calculates everything. If you just wrote to the DOM before that read, it has to recalculate from scratch. Do this in a loop and you get what Chrome DevTools calls <strong>layout thrashing</strong>.
+        </p>
+
+        <pre><code>// this causes a reflow on every single iteration
+items.forEach(item => {
+  const div = document.createElement('div');
+  div.textContent = item.text;
+  container.appendChild(div);
+  heights.push(div.offsetHeight); // reflow here, every time
+});</code></pre>
+
+        <div class="article-callout">
+          <p>The general advice is to batch reads before writes. Pretext.js goes further and removes the read entirely for text height calculations.</p>
+        </div>
+
+        <h2>How it works</h2>
+
+        <p>
+          Two functions is really all you need. <code>prepare(text, font)</code> runs the text through Canvas <code>measureText()</code> once per unique glyph and stores the widths. <code>layout(prepared, maxWidth, lineHeight)</code> walks those cached widths and breaks lines using arithmetic, no DOM involved. Call prepare once, call layout as many times as you want at different widths without re-measuring anything.
+        </p>
+
+        <pre><code>import { prepare, layout } from '@chenglou/pretext';
+
+const handle = prepare('Hello, world!', '16px "Inter"');
+
+// works at any container width, no reflow
+const { height, lineCount } = layout(handle, 320, 24);
+
+console.log(height);     // 24 (one line at 24px line height)
+console.log(lineCount);  // 1</code></pre>
+
+        <p>
+          The benchmark is around 1,000 text blocks in 2ms. For most UIs that kind of headroom makes height pre-computation on mount actually practical.
+        </p>
+
+        <h2>Installing</h2>
+
+        <pre><code>npm install @chenglou/pretext
+# or pnpm add / bun add</code></pre>
+
+        <p>
+          No bundler needed if you want to try it fast. Just use the ESM build directly:
+        </p>
+
+        <pre><code>&lt;script type="module"&gt;
+  import { prepare, layout }
+    from 'https://unpkg.com/@chenglou/pretext@0.0.3/dist/layout.js';
+&lt;/script&gt;</code></pre>
+
+        <h2>Live demo</h2>
+
+        <p>
+          I used Pretext.js here to measure the height of a large "P" and centre it on a canvas without any DOM read. Move your mouse over the ghosts once they settle.
+        </p>
+
+        <!-- ── LIVE DEMO ─────────────────────────────────────────── -->
+        <div class="demo-block">
+          <div class="demo-block__label">
+            <span></span>
+            LIVE DEMO &nbsp;·&nbsp; pretext.js + Canvas API
+          </div>
+          <div class="demo-block__canvas-wrap" id="demoWrap">
+            <canvas id="demoCanvas"></canvas>
+            <div class="demo-subtitle" id="demoSubtitle">for <em>Pooja</em> 👻</div>
+            <div class="demo-metrics" id="demoMetrics"></div>
+            <button class="demo-replay" id="replayBtn">↺ Replay</button>
+          </div>
+        </div>
+
+        <p>
+          The centering calculation looks like this. Pretext gives the exact text height so no DOM read is needed:
+        </p>
+
+        <pre><code>const handle  = prepare('P', `900 ${fontSize}px Arial Black`);
+const { height } = layout(handle, canvasWidth, fontSize * 1.2);
+
+const offsetY = (canvasHeight - height) / 2;</code></pre>
+
+        <h2>Where it actually helps</h2>
+
+        <p>
+          For a regular content page you genuinely don't need this. But there are a few situations where it makes a real difference.
+        </p>
+
+        <p>
+          Virtual scroll is the obvious one. To know which items are in the viewport you need the height of every row, including the ones that aren't rendered yet. With Pretext you can compute all row heights upfront without putting a single element in the DOM.
+        </p>
+
+        <pre><code>const rowHeights = messages.map(msg => {
+  const h = prepare(msg.text, '15px "Inter"');
+  return layout(h, 560, 22).height + 24;
+});</code></pre>
+
+        <p>
+          LLM streaming is the other case I keep running into. When tokens are arriving fast and every token changes the bubble height, triggering reflow on each update is too slow. Pretext handles resize in under a millisecond so you can update the layout on every token without dropping frames.
+        </p>
+
+        <p>
+          Canvas editors are the third one. If you are building anything Figma-style where text renders to canvas, you need exact line positions for cursor placement and selection. The <code>walkLineRanges</code> API hands you line geometry without allocating intermediate strings, which keeps GC pauses out of the picture.
+        </p>
+
+        <h2>The API in one place</h2>
+
+        <div class="article-callout">
+          <p>
+            <strong>prepare(text, font)</strong> — measure and cache. Call this once per piece of text.<br/>
+            <strong>layout(handle, maxWidth, lineHeight)</strong> — returns <code>{ height, lineCount }</code>. Fast, no DOM.<br/>
+            <strong>layoutWithLines(handle, maxWidth, lineHeight)</strong> — same but also returns line objects with text and widths.<br/>
+            <strong>walkLineRanges(handle, maxWidth, cb)</strong> — iterate lines without allocating strings.<br/>
+            <strong>layoutNextLine(handle, start, maxWidth)</strong> — step through one line at a time.<br/>
+            <strong>clearCache()</strong> — free internal caches when you no longer need them.<br/>
+            <strong>setLocale(locale)</strong> — controls word breaking for CJK, Arabic, etc.
+          </p>
+        </div>
+
+        <h2>Worth trying?</h2>
+
+        <p>
+          It is a small library with zero dependencies and full TypeScript types. If you are not hitting the reflow problem it will not do anything for you. But if you are building something that measures a lot of text, especially dynamically, it is worth dropping in. The <code>prepare</code> and <code>layout</code> calls are simple enough that you can integrate it in ten minutes and immediately see whether it helps.
+        </p>
+
+        <p>
+          If you are building a virtual list, an AI chat UI, or any Canvas-based renderer that needs reliable text geometry, it is worth adding to your toolbox. The <code>prepare + layoutWithLines</code> pattern alone covers 90% of use cases in a handful of lines.
+        </p>
+
+        <div class="article-tags">
+          <span class="tag">JavaScript</span>
+          <span class="tag">Performance</span>
+          <span class="tag">Canvas</span>
+          <span class="tag">Text Layout</span>
+          <span class="tag">Frontend</span>
+          <span class="tag">DevOps</span>
+        </div>
+
+        <div class="article-author">
+          <span>Written by <strong>Sainath</strong> 👻</span>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <span class="footer__brand">DevJodi</span>
+        <span class="footer__copy">&copy; 2026 DevJodi. All rights reserved.</span>
+        <nav class="footer__nav" aria-label="Footer navigation">
+          <a href="../index.html#home">Home</a>
+          <a href="../index.html#services">Services</a>
+          <a href="../index.html#projects">Projects</a>
+          <a href="../index.html#blog">Blog</a>
+          <a href="../index.html#contact">Contact</a>
+        </nav>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+
+  <!-- ── demo script ──────────────────────────────────────────────── -->
+  <script type="module">
+    import { prepare, layout } from '../assets/js/vendor/pretext.js';
+
+    const canvas   = document.getElementById('demoCanvas');
+    const ctx      = canvas.getContext('2d');
+    const subtitle = document.getElementById('demoSubtitle');
+    const metrics  = document.getElementById('demoMetrics');
+    const replay   = document.getElementById('replayBtn');
+
+    // mouse tracking
+    let mouse = { x: -999, y: -999 };
+    canvas.addEventListener('mousemove', e => {
+      const r = canvas.getBoundingClientRect();
+      mouse.x = e.clientX - r.left;
+      mouse.y = e.clientY - r.top;
+    });
+    canvas.addEventListener('mouseleave', () => { mouse.x = -999; mouse.y = -999; });
+
+    const W = Math.min(window.innerWidth * 0.86, 500);
+    const H = 360;
+    canvas.width  = W;
+    canvas.height = H;
+
+    // use a system font guaranteed to be available — no async load needed
+    const fontSize   = Math.min(W, H) * 0.72;
+    const fontString = `900 ${fontSize}px Arial Black, Arial, sans-serif`;
+
+    let rafId = null;
+
+    async function initDemo() {
+      // cancel any running loop
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+
+
+      subtitle.classList.remove('visible');
+      metrics.classList.remove('visible');
+      ctx.clearRect(0, 0, W, H);
+
+      // wait for the exact font to be ready in the browser
+      await document.fonts.load(fontString, 'P');
+
+      // ── Pretext.js: measure the "P" precisely ────────────────────
+      const handle   = prepare('P', fontString);
+      const ptResult = layout(handle, W, fontSize * 1.2);
+      const offsetY  = Math.max(0, (H - ptResult.height) / 2);
+
+      metrics.textContent =
+        `pretext.js  →  height: ${Math.round(ptResult.height)}px · lines: ${ptResult.lineCount} · centreY: ${Math.round(offsetY)}px`;
+
+      // ── offscreen canvas: render "P" and sample filled pixels ─────
+      const off    = document.createElement('canvas');
+      off.width    = W;
+      off.height   = H;
+      const offCtx = off.getContext('2d');
+
+      offCtx.fillStyle    = '#ffffff';
+      offCtx.font         = fontString;
+      offCtx.textAlign    = 'center';
+      offCtx.textBaseline = 'top';
+      offCtx.fillText('P', W / 2, offsetY);
+
+      const { data } = offCtx.getImageData(0, 0, W, H);
+      const targets  = [];
+      const STEP     = 10;
+
+      for (let y = 0; y < H; y += STEP)
+        for (let x = 0; x < W; x += STEP)
+          if (data[((y * W + x) * 4) + 3] > 120)
+            targets.push({ x, y });
+
+      if (targets.length === 0) {
+        // safety fallback: draw a visible error message
+        ctx.fillStyle = '#6366f1';
+        ctx.font      = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('font not ready — click ↺ replay', W / 2, H / 2);
+        return;
+      }
+
+      targets.sort(() => Math.random() - 0.5);
+
+      // ── build particles ───────────────────────────────────────────
+      const GS      = STEP * 1.4;
+      const MAX_DEL = 1500;
+
+      const particles = targets.map(t => ({
+        x:  Math.random() * W,
+        y:  Math.random() * H,
+        vx: (Math.random() - 0.5) * 5,
+        vy: (Math.random() - 0.5) * 5,
+        tx: t.x, ty: t.y,
+        delay:    Math.random() * MAX_DEL,
+        settled:  false,
+        alpha:    0,
+        bobPhase: Math.random() * Math.PI * 2,
+        bobSpeed: 0.7 + Math.random() * 0.8,
+        bobAmp:   1.5 + Math.random() * 2.0,
+      }));
+
+      // ── background sparkles ───────────────────────────────────────
+      const sparkles = Array.from({ length: 45 }, () => ({
+        x:     Math.random() * W,
+        y:     Math.random() * H,
+        r:     0.6 + Math.random() * 2.2,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.12 + Math.random() * 0.55,
+      }));
+
+      // ── render loop ───────────────────────────────────────────────
+      let glowPulse  = 0;
+      let allSettled = false;
+      const START    = performance.now();
+
+      function draw(now) {
+        ctx.clearRect(0, 0, W, H);
+
+        const elapsed  = now - START;
+        const t        = elapsed / 1000;
+        let   unsettled = 0;
+
+        // sparkle dots
+        for (const s of sparkles) {
+          s.phase += 0.018 * s.speed;
+          ctx.globalAlpha = (Math.sin(s.phase) * 0.5 + 0.5) * 0.55;
+          ctx.fillStyle   = '#6366f1';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        // ghost particles
+        ctx.font         = `${GS}px serif`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'top';
+
+        for (const p of particles) {
+          if (elapsed < p.delay) { unsettled++; continue; }
+
+          // mouse repulsion — push ghosts away from cursor
+          const mdx   = p.x - mouse.x;
+          const mdy   = p.y - mouse.y;
+          const mdist = Math.hypot(mdx, mdy);
+          const REPEL = 72;
+          if (mdist < REPEL && mdist > 0) {
+            const force = (REPEL - mdist) / REPEL * 5.5;
+            p.vx += (mdx / mdist) * force;
+            p.vy += (mdy / mdist) * force;
+            p.settled = false;
+          }
+
+          if (!p.settled) {
+            const dx = p.tx - p.x;
+            const dy = p.ty - p.y;
+            if (Math.hypot(dx, dy) < 1.5 && mdist >= REPEL) {
+              p.x = p.tx; p.y = p.ty; p.settled = true;
+            } else {
+              p.vx = p.vx * 0.80 + dx * 0.09;
+              p.vy = p.vy * 0.80 + dy * 0.09;
+              p.x += p.vx;
+              p.y += p.vy;
+              unsettled++;
+            }
+            p.alpha = Math.min(1, p.alpha + 0.08);
+          }
+
+          const bobY = p.settled
+            ? Math.sin(t * p.bobSpeed + p.bobPhase) * p.bobAmp
+            : 0;
+
+          ctx.globalAlpha = p.alpha;
+          ctx.fillText('👻', p.x - GS / 2, p.y - GS / 2 + bobY);
+        }
+
+        ctx.globalAlpha = 1;
+
+        // mark settled
+        if (unsettled === 0 && !allSettled) {
+          allSettled = true;
+          subtitle.classList.add('visible');
+          metrics.classList.add('visible');
+        }
+
+        // pulsing indigo + teal glow once settled
+        if (allSettled) {
+          glowPulse += 0.02;
+          const pulse = 0.13 + 0.07 * Math.sin(glowPulse);
+          ctx.save();
+          ctx.globalCompositeOperation = 'screen';
+          const gr = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.54);
+          gr.addColorStop(0,   `rgba(99,102,241,${pulse})`);
+          gr.addColorStop(0.5, `rgba(34,211,162,${pulse * 0.35})`);
+          gr.addColorStop(1,   'rgba(0,0,0,0)');
+          ctx.fillStyle = gr;
+          ctx.fillRect(0, 0, W, H);
+          ctx.restore();
+        }
+
+        rafId = requestAnimationFrame(draw);
+      }
+
+      rafId = requestAnimationFrame(draw);
+    }
+
+    replay.addEventListener('click', initDemo);
+
+    // show loading state on canvas immediately
+    function showLoading() {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle   = 'rgba(99,102,241,0.5)';
+      ctx.font        = '14px Arial';
+      ctx.textAlign   = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('loading…', W / 2, H / 2);
+    }
+
+    async function safeInit() {
+      showLoading();
+      try {
+        await initDemo();
+      } catch (err) {
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle    = '#f87171';
+        ctx.font         = '13px Arial';
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('error: ' + err.message, W / 2, H / 2);
+        console.error('demo error:', err);
+      }
+    }
+
+    replay.addEventListener('click', safeInit);
+    document.fonts.ready.then(safeInit);
+  </script>
+
+</body>
+</html>
